@@ -144,9 +144,43 @@ server.listen(PORT, async () => {
   startMonitor(io);
   console.log('[Server] Heartbeat monitor started');
 
+  // ── Start scheduled task dispatcher ────────────────────
+  startScheduledDispatcher();
+
   // ── Start all 3 workers inline ──────────────────────────
   startWorkers(io);
 });
+
+// ── Scheduled task dispatcher (checks every 5s) ─────────
+function startScheduledDispatcher() {
+  const { enqueueTask } = require('./queues/taskQueue');
+  setInterval(async () => {
+    try {
+      const due = await db.query(
+        `UPDATE scheduled_tasks SET status = 'DISPATCHED'
+         WHERE status = 'PENDING' AND run_at <= NOW()
+         RETURNING task_id`
+      );
+      for (const row of due.rows) {
+        const task = await db.query(
+          `UPDATE tasks SET status = 'QUEUED', updated_at = NOW()
+           WHERE id = $1 RETURNING id, type, payload`,
+          [row.task_id]
+        );
+        if (task.rows.length) {
+          const t = task.rows[0];
+          const payload = typeof t.payload === 'string' ? JSON.parse(t.payload) : t.payload;
+          const job = await enqueueTask(t.id, t.type, payload);
+          await db.query(`UPDATE tasks SET bullmq_job_id = $1 WHERE id = $2`, [job.id, t.id]);
+          console.log(`[Scheduler] Dispatched scheduled task ${t.id} (${t.type})`);
+        }
+      }
+    } catch (err) {
+      console.error('[Scheduler] Error:', err.message);
+    }
+  }, 5000);
+  console.log('[Server] Scheduled task dispatcher started');
+}
 
 // ── Inline worker launcher ────────────────────────────────
 function startWorkers(io) {

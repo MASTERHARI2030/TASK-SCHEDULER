@@ -22,9 +22,14 @@ async function registerWorker() {
 function startHeartbeat(workerId) {
   setInterval(async () => {
     try {
-      await db.query(
-        `UPDATE workers SET last_heartbeat = NOW(), status = 'ALIVE' WHERE id = $1`,
+      const active = await db.query(
+        `SELECT COUNT(*) FROM tasks WHERE worker_id = $1 AND status = 'PROCESSING'`,
         [workerId]
+      );
+      const newStatus = parseInt(active.rows[0].count) > 0 ? 'ALIVE' : 'IDLE';
+      await db.query(
+        `UPDATE workers SET last_heartbeat = NOW(), status = $1 WHERE id = $2`,
+        [newStatus, workerId]
       );
     } catch (err) {
       console.error(`[${WORKER_NAME}] Heartbeat error:`, err.message);
@@ -72,7 +77,10 @@ function createReportWorker(io) {
         [workerId, taskId]
       );
       await logEvent(taskId, workerId, 'PICKED_UP', `Job ${job.id} picked up by ${WORKER_NAME}`);
-      if (io) io.emit('log:new', { source: WORKER_NAME, event: 'PICKED_UP', message: `Picked up job ${job.id}`, timestamp: new Date().toISOString() });
+      if (io) {
+        io.emit('task:update', { id: taskId, status: 'PROCESSING', worker_name: WORKER_NAME });
+        io.emit('log:new', { source: WORKER_NAME, event: 'PICKED_UP', message: `Picked up job ${job.id}`, timestamp: new Date().toISOString() });
+      }
 
       const result = await simulateGenerateReport(payload);
       const duration = ((Date.now() - start) / 1000).toFixed(2);
@@ -86,7 +94,10 @@ function createReportWorker(io) {
         [workerId]
       );
       await logEvent(taskId, workerId, 'COMPLETED', `Completed in ${duration}s`);
-      if (io) io.emit('log:new', { source: WORKER_NAME, event: 'COMPLETED', message: `Completed job ${job.id} in ${duration}s`, timestamp: new Date().toISOString() });
+      if (io) {
+        io.emit('task:update', { id: taskId, status: 'COMPLETED', worker_name: WORKER_NAME });
+        io.emit('log:new', { source: WORKER_NAME, event: 'COMPLETED', message: `Completed job ${job.id} in ${duration}s`, timestamp: new Date().toISOString() });
+      }
 
       console.log(`[${WORKER_NAME}] Completed job ${job.id} in ${duration}s`);
       return result;
@@ -116,6 +127,7 @@ function createReportWorker(io) {
       );
       await logEvent(taskId, workerId, 'FAILED', `Attempt ${job.attemptsMade}: ${err.message}`);
 
+      if (io) io.emit('task:update', { id: taskId, status: 'FAILED', worker_name: WORKER_NAME });
       if (job.attemptsMade >= job.opts.attempts) {
         await db.query(
           `INSERT INTO dlq_tasks (original_task_id, type, payload, reason, attempts)

@@ -28,7 +28,7 @@ async function detectDeadWorkers() {
   const res = await db.query(
     `UPDATE workers
      SET status = 'DEAD'
-     WHERE status = 'ALIVE'
+     WHERE status IN ('ALIVE', 'IDLE')
        AND last_heartbeat < $1
      RETURNING id, name, type, last_heartbeat`,
     [staleTime]

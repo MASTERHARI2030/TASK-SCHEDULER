@@ -47,6 +47,15 @@ socket.on('task:new', (task) => {
   renderTaskTable();
 });
 
+socket.on('task:update', (update) => {
+  const task = allTasks.find((t) => t.id === update.id);
+  if (task) {
+    task.status = update.status;
+    if (update.worker_name) task.worker_name = update.worker_name;
+    renderTaskTable();
+  }
+});
+
 socket.on('task:reassigned', (data) => {
   appendLog({ event: 'REASSIGNED', worker_name: 'MONITOR', message: `Task ${shortId(data.taskId)} reassigned (attempt ${data.attempt})`, created_at: new Date().toISOString() });
 });
