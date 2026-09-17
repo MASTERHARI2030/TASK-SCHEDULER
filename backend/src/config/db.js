@@ -1,15 +1,15 @@
 const { Pool } = require('pg');
-const tls = require('tls');
 require('dotenv').config();
 
-const isRemote = process.env.DATABASE_URL && !process.env.DATABASE_URL.includes('localhost');
+const dbUrl = process.env.DATABASE_URL || '';
+
+// Internal Render URL has no hostname suffix (ends with -a/dbname)
+// External Render URL contains .render.com or .postgres.render.com
+const needsSSL = dbUrl.includes('.render.com') || dbUrl.includes('ohio-postgres');
 
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: isRemote ? {
-    rejectUnauthorized: false,
-    secureProtocol: 'TLSv1_2_method',
-  } : false,
+  connectionString: dbUrl,
+  ssl: needsSSL ? { rejectUnauthorized: false } : false,
   connectionTimeoutMillis: 20000,
   idleTimeoutMillis: 30000,
   max: 5,
