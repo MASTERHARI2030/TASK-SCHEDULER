@@ -81,15 +81,28 @@ server.listen(PORT, async () => {
     console.log('[Server] Redis connection verified');
   } catch (err) {
     console.error('[Server] Redis connection failed:', err.message);
-    process.exit(1);
   }
 
-  try {
-    await db.query('SELECT NOW()');
-    console.log('[Server] PostgreSQL connection verified');
-  } catch (err) {
-    console.error('[Server] PostgreSQL connection failed:', err.message);
-    process.exit(1);
+  // Log DB URL prefix for debugging (hide password)
+  const dbUrl = process.env.DATABASE_URL || 'NOT SET';
+  const dbPreview = dbUrl.length > 20 ? dbUrl.replace(/:([^@]+)@/, ':***@').substring(0, 80) : dbUrl;
+  console.log(`[Server] DATABASE_URL: ${dbPreview}`);
+
+  // Retry PostgreSQL connection up to 5 times
+  let pgConnected = false;
+  for (let i = 1; i <= 5; i++) {
+    try {
+      await db.query('SELECT NOW()');
+      console.log('[Server] PostgreSQL connection verified');
+      pgConnected = true;
+      break;
+    } catch (err) {
+      console.error(`[Server] PostgreSQL attempt ${i}/5 failed: ${err.message}`);
+      if (i < 5) await new Promise(r => setTimeout(r, 3000));
+    }
+  }
+  if (!pgConnected) {
+    console.error('[Server] PostgreSQL unavailable — check DATABASE_URL env var on Render');
   }
 
   // ── Run schema migrations on startup ───────────────────
