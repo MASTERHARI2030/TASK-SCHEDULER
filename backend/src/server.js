@@ -16,7 +16,7 @@ const fs = require('fs');
 // ── Auto-run schema on startup ────────────────────────────
 async function runSchema() {
   try {
-    const schema = fs.readFileSync(path.join(__dirname, '../../schema.sql'), 'utf8');
+    const schema = fs.readFileSync(path.join(__dirname, '../schema.sql'), 'utf8');
     const statements = schema.split(';').map(s => s.trim()).filter(s => s.length > 0);
     for (const stmt of statements) {
       try { await db.query(stmt); } catch (e) {
