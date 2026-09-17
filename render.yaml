@@ -1,0 +1,65 @@
+services:
+  # ── API + Dashboard server ────────────────────────────
+  - type: web
+    name: task-scheduler-api
+    env: node
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: node src/server.js
+    envVars:
+      - key: PORT
+        value: 3000
+      - key: REDIS_URL
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: HEARTBEAT_INTERVAL
+        value: 5000
+      - key: MONITOR_INTERVAL
+        value: 10000
+      - key: STALE_THRESHOLD
+        value: 15000
+      - key: JOB_ATTEMPTS
+        value: 3
+      - key: JOB_BACKOFF_DELAY
+        value: 2000
+
+  # ── Worker processes ──────────────────────────────────
+  - type: worker
+    name: task-scheduler-workers
+    env: node
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: node src/workers/startAll.js
+    envVars:
+      - key: REDIS_URL
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: HEARTBEAT_INTERVAL
+        value: 5000
+      - key: JOB_ATTEMPTS
+        value: 3
+      - key: JOB_BACKOFF_DELAY
+        value: 2000
+
+  # ── Heartbeat monitor ─────────────────────────────────
+  - type: worker
+    name: task-scheduler-monitor
+    env: node
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: node src/monitor/heartbeatMonitor.js
+    envVars:
+      - key: REDIS_URL
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: MONITOR_INTERVAL
+        value: 10000
+      - key: STALE_THRESHOLD
+        value: 15000
+
+databases:
+  - name: task-scheduler-db
+    plan: free

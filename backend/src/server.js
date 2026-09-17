@@ -1,0 +1,83 @@
+require('dotenv').config();
+const express = require('express');
+const cors = require('cors');
+const http = require('http');
+const path = require('path');
+const { Server } = require('socket.io');
+
+const redis = require('./config/redis');
+const db = require('./config/db');
+const { startMonitor } = require('./monitor/heartbeatMonitor');
+const { setupRealtime } = require('./socket/realtime');
+const taskRoutes = require('./routes/tasks');
+const workerRoutes = require('./routes/workers');
+
+const app = express();
+const server = http.createServer(app);
+
+const io = new Server(server, {
+  cors: { origin: '*' }
+});
+
+app.use(cors());
+app.use(express.json());
+
+// ── Serve frontend ────────────────────────────────────────
+app.use(express.static(path.join(__dirname, '../../frontend')));
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, '../../frontend/index.html'));
+});
+
+// ── Health check ──────────────────────────────────────────
+app.get('/health', async (req, res) => {
+  try {
+    await redis.ping();
+    await db.query('SELECT 1');
+    res.json({
+      status: 'ok',
+      redis: 'connected',
+      postgres: 'connected',
+      timestamp: new Date().toISOString()
+    });
+  } catch (err) {
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+
+// ── Routes ───────────────────────────────────────────────
+app.use('/api/tasks', taskRoutes);
+app.use('/api/workers', workerRoutes);
+
+// Export io so routes/monitor can emit events
+app.set('io', io);
+
+// ── Real-time broadcast ───────────────────────────────────
+setupRealtime(io);
+
+// ── Start heartbeat monitor wired to Socket.IO ────────────
+startMonitor(io);
+
+// ── Start server ──────────────────────────────────────────
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, async () => {
+  console.log(`[Server] Running on port ${PORT}`);
+
+  // Verify Redis
+  try {
+    await redis.ping();
+    console.log('[Server] Redis connection verified');
+  } catch (err) {
+    console.error('[Server] Redis connection failed:', err.message);
+  }
+
+  // Verify PostgreSQL
+  try {
+    await db.query('SELECT NOW()');
+    console.log('[Server] PostgreSQL connection verified');
+  } catch (err) {
+    console.error('[Server] PostgreSQL connection failed:', err.message);
+  }
+});
+
+module.exports = { app, io };

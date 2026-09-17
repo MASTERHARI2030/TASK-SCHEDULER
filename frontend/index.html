@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Distributed Task Scheduler</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ── Header ─────────────────────────────────────────── -->
+  <header>
+    <div class="header-left">
+      <span class="logo">⚡</span>
+      <div>
+        <h1>Task Scheduler</h1>
+        <span class="subtitle">Distributed Worker System</span>
+      </div>
+    </div>
+    <div class="header-right">
+      <span class="conn-dot" id="connDot"></span>
+      <span id="connLabel">Connecting...</span>
+      <span class="clock" id="clock"></span>
+    </div>
+  </header>
+
+  <!-- ── Queue Metrics Bar ──────────────────────────────── -->
+  <section class="metrics-bar">
+    <div class="metric-card">
+      <span class="metric-value" id="mWaiting">0</span>
+      <span class="metric-label">Waiting</span>
+    </div>
+    <div class="metric-card active">
+      <span class="metric-value" id="mActive">0</span>
+      <span class="metric-label">Active</span>
+    </div>
+    <div class="metric-card completed">
+      <span class="metric-value" id="mCompleted">0</span>
+      <span class="metric-label">Completed</span>
+    </div>
+    <div class="metric-card failed">
+      <span class="metric-value" id="mFailed">0</span>
+      <span class="metric-label">Failed</span>
+    </div>
+    <div class="metric-card delayed">
+      <span class="metric-value" id="mDelayed">0</span>
+      <span class="metric-label">Delayed</span>
+    </div>
+  </section>
+
+  <!-- ── Main Grid ──────────────────────────────────────── -->
+  <main class="grid">
+
+    <!-- Left column -->
+    <div class="col-left">
+
+      <!-- Worker Health Cards -->
+      <section class="panel">
+        <h2 class="panel-title">Worker Health</h2>
+        <div class="worker-cards" id="workerCards">
+          <div class="worker-card skeleton"></div>
+          <div class="worker-card skeleton"></div>
+          <div class="worker-card skeleton"></div>
+        </div>
+      </section>
+
+      <!-- Submit Task Form -->
+      <section class="panel">
+        <h2 class="panel-title">Submit Task</h2>
+        <form id="taskForm" class="task-form">
+          <div class="form-row">
+            <label>Task Type</label>
+            <select id="taskType">
+              <option value="send-email">📧 Send Email</option>
+              <option value="process-file">📁 Process File</option>
+              <option value="generate-report">📊 Generate Report</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>Priority <span id="priorityVal">1</span></label>
+            <input type="range" id="taskPriority" min="1" max="10" value="1"
+              oninput="document.getElementById('priorityVal').textContent = this.value" />
+          </div>
+          <div class="form-row">
+            <label>Delay (ms)</label>
+            <input type="number" id="taskDelay" value="0" min="0" step="1000" placeholder="0 = immediate" />
+          </div>
+          <div class="form-row">
+            <label>Payload (JSON)</label>
+            <textarea id="taskPayload" rows="3" placeholder='{"key": "value"}'>{}</textarea>
+          </div>
+          <button type="submit" class="btn-submit" id="submitBtn">Submit Task</button>
+          <div id="submitFeedback" class="submit-feedback"></div>
+        </form>
+      </section>
+
+    </div>
+
+    <!-- Right column -->
+    <div class="col-right">
+
+      <!-- Live Task Feed -->
+      <section class="panel">
+        <div class="panel-header">
+          <h2 class="panel-title">Live Task Feed</h2>
+          <div class="filter-row">
+            <select id="filterStatus" onchange="filterTasks()">
+              <option value="">All Status</option>
+              <option value="QUEUED">Queued</option>
+              <option value="PROCESSING">Processing</option>
+              <option value="COMPLETED">Completed</option>
+              <option value="FAILED">Failed</option>
+              <option value="DELAYED">Delayed</option>
+            </select>
+            <select id="filterType" onchange="filterTasks()">
+              <option value="">All Types</option>
+              <option value="send-email">Send Email</option>
+              <option value="process-file">Process File</option>
+              <option value="generate-report">Generate Report</option>
+            </select>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="task-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Type</th>
+                <th>Status</th>
+                <th>Worker</th>
+                <th>Priority</th>
+                <th>Created</th>
+              </tr>
+            </thead>
+            <tbody id="taskTableBody">
+              <tr><td colspan="6" class="empty-row">Waiting for data...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+    </div>
+  </main>
+
+  <!-- ── Bottom Grid ────────────────────────────────────── -->
+  <div class="bottom-grid">
+
+    <!-- DLQ Panel -->
+    <section class="panel dlq-panel">
+      <h2 class="panel-title">⚠ Dead Letter Queue</h2>
+      <div id="dlqList" class="dlq-list">
+        <p class="empty-msg">No failed tasks</p>
+      </div>
+    </section>
+
+    <!-- Execution Log -->
+    <section class="panel log-panel">
+      <div class="panel-header">
+        <h2 class="panel-title">Execution Log</h2>
+        <button class="btn-clear" onclick="clearLog()">Clear</button>
+      </div>
+      <div class="log-feed" id="logFeed">
+        <p class="empty-msg">Waiting for events...</p>
+      </div>
+    </section>
+
+  </div>
+
+  <script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
