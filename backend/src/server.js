@@ -17,7 +17,7 @@ const fs = require('fs');
 async function runSchema() {
   try {
     const schema = fs.readFileSync(path.join(__dirname, '../schema.sql'), 'utf8');
-    const statements = schema.split(';').map(s => s.trim()).filter(s => s.length > 0);
+    const statements = splitSQL(schema);
     for (const stmt of statements) {
       try { await db.query(stmt); } catch (e) {
         if (!e.message.includes('already exists')) console.warn('[Schema]', e.message);
@@ -27,6 +27,38 @@ async function runSchema() {
   } catch (err) {
     console.error('[Schema] Failed to run schema:', err.message);
   }
+}
+
+// Split SQL respecting dollar-quoted blocks ($$...$$)
+function splitSQL(sql) {
+  const stmts = [];
+  let current = '';
+  let inDollar = false;
+  let i = 0;
+  while (i < sql.length) {
+    if (!inDollar && sql[i] === '-' && sql[i+1] === '-') {
+      // skip line comment
+      while (i < sql.length && sql[i] !== '\n') i++;
+      continue;
+    }
+    if (sql[i] === '$' && sql[i+1] === '$') {
+      inDollar = !inDollar;
+      current += '$$';
+      i += 2;
+      continue;
+    }
+    if (!inDollar && sql[i] === ';') {
+      const s = current.trim();
+      if (s) stmts.push(s);
+      current = '';
+      i++;
+      continue;
+    }
+    current += sql[i++];
+  }
+  const s = current.trim();
+  if (s) stmts.push(s);
+  return stmts;
 }
 
 const app = express();
