@@ -7,8 +7,6 @@ const WORKER_TYPE = 'process-file';
 const QUEUE_NAME  = 'file-queue';
 const HEARTBEAT_INTERVAL = parseInt(process.env.HEARTBEAT_INTERVAL) || 5000;
 
-let workerId = null;
-
 async function registerWorker() {
   const res = await db.query(
     `INSERT INTO workers (name, type, status, last_heartbeat)
@@ -18,11 +16,10 @@ async function registerWorker() {
      RETURNING id`,
     [WORKER_NAME, WORKER_TYPE]
   );
-  workerId = res.rows[0].id;
-  console.log(`[${WORKER_NAME}] Registered with id: ${workerId}`);
+  return res.rows[0].id;
 }
 
-function startHeartbeat() {
+function startHeartbeat(workerId) {
   setInterval(async () => {
     try {
       await db.query(
@@ -35,7 +32,7 @@ function startHeartbeat() {
   }, HEARTBEAT_INTERVAL);
 }
 
-async function logEvent(taskId, event, message) {
+async function logEvent(taskId, workerId, event, message) {
   await db.query(
     `INSERT INTO execution_logs (task_id, worker_id, worker_name, event, message)
      VALUES ($1, $2, $3, $4, $5)`,
@@ -43,7 +40,6 @@ async function logEvent(taskId, event, message) {
   );
 }
 
-// ── Simulate processing a file (3s work) ─────────────────
 async function simulateProcessFile(payload) {
   await new Promise((resolve) => setTimeout(resolve, 3000));
   return {
@@ -54,80 +50,91 @@ async function simulateProcessFile(payload) {
   };
 }
 
-const worker = new Worker(
-  QUEUE_NAME,
-  async (job) => {
-    const { taskId, payload } = job.data;
-    const start = Date.now();
+function createFileWorker(io) {
+  let workerId = null;
 
-    console.log(`[${WORKER_NAME}] Picked up job ${job.id} | task: ${taskId}`);
+  registerWorker().then((id) => {
+    workerId = id;
+    startHeartbeat(workerId);
+    console.log(`[${WORKER_NAME}] Registered: ${workerId}`);
+  }).catch((err) => console.error(`[${WORKER_NAME}] Registration error:`, err.message));
 
-    await db.query(
-      `UPDATE tasks SET status = 'PROCESSING', worker_id = $1, updated_at = NOW() WHERE id = $2`,
-      [workerId, taskId]
-    );
-    await logEvent(taskId, 'PICKED_UP', `Job ${job.id} picked up by ${WORKER_NAME}`);
+  const worker = new Worker(
+    QUEUE_NAME,
+    async (job) => {
+      const { taskId, payload } = job.data;
+      const start = Date.now();
 
-    const result = await simulateProcessFile(payload);
-    const duration = ((Date.now() - start) / 1000).toFixed(2);
+      console.log(`[${WORKER_NAME}] Picked up job ${job.id} | task: ${taskId}`);
 
-    await db.query(
-      `UPDATE tasks SET status = 'COMPLETED', updated_at = NOW() WHERE id = $1`,
-      [taskId]
-    );
-    await db.query(
-      `UPDATE workers SET jobs_completed = jobs_completed + 1 WHERE id = $1`,
-      [workerId]
-    );
-    await logEvent(taskId, 'COMPLETED', `Completed in ${duration}s — ${JSON.stringify(result)}`);
-
-    console.log(`[${WORKER_NAME}] Completed job ${job.id} in ${duration}s`);
-    return result;
-  },
-  {
-    connection: new (require('ioredis'))(process.env.REDIS_URL, {
-      maxRetriesPerRequest: null,
-      enableReadyCheck: false,
-    }),
-    concurrency: 2,
-    stalledInterval: 10000,
-    maxStalledCount: 1,
-  }
-);
-
-worker.on('failed', async (job, err) => {
-  console.error(`[${WORKER_NAME}] Job ${job.id} failed:`, err.message);
-  try {
-    const { taskId } = job.data;
-    await db.query(
-      `UPDATE tasks SET status = 'FAILED', attempts = $1, updated_at = NOW() WHERE id = $2`,
-      [job.attemptsMade, taskId]
-    );
-    await db.query(
-      `UPDATE workers SET jobs_failed = jobs_failed + 1 WHERE id = $1`,
-      [workerId]
-    );
-    await logEvent(taskId, 'FAILED', `Attempt ${job.attemptsMade}: ${err.message}`);
-
-    if (job.attemptsMade >= job.opts.attempts) {
       await db.query(
-        `INSERT INTO dlq_tasks (original_task_id, type, payload, reason, attempts)
-         VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT DO NOTHING`,
-        [taskId, job.data.type, JSON.stringify(job.data.payload), err.message, job.attemptsMade]
+        `UPDATE tasks SET status = 'PROCESSING', worker_id = $1, updated_at = NOW() WHERE id = $2`,
+        [workerId, taskId]
       );
-      await logEvent(taskId, 'DLQ', `Moved to DLQ after ${job.attemptsMade} attempts`);
-      console.log(`[${WORKER_NAME}] Job ${job.id} moved to DLQ`);
+      await logEvent(taskId, workerId, 'PICKED_UP', `Job ${job.id} picked up by ${WORKER_NAME}`);
+      if (io) io.emit('log:new', { source: WORKER_NAME, event: 'PICKED_UP', message: `Picked up job ${job.id}`, timestamp: new Date().toISOString() });
+
+      const result = await simulateProcessFile(payload);
+      const duration = ((Date.now() - start) / 1000).toFixed(2);
+
+      await db.query(
+        `UPDATE tasks SET status = 'COMPLETED', updated_at = NOW() WHERE id = $1`,
+        [taskId]
+      );
+      await db.query(
+        `UPDATE workers SET jobs_completed = jobs_completed + 1 WHERE id = $1`,
+        [workerId]
+      );
+      await logEvent(taskId, workerId, 'COMPLETED', `Completed in ${duration}s`);
+      if (io) io.emit('log:new', { source: WORKER_NAME, event: 'COMPLETED', message: `Completed job ${job.id} in ${duration}s`, timestamp: new Date().toISOString() });
+
+      console.log(`[${WORKER_NAME}] Completed job ${job.id} in ${duration}s`);
+      return result;
+    },
+    {
+      connection: new (require('ioredis'))(process.env.REDIS_URL, {
+        maxRetriesPerRequest: null,
+        enableReadyCheck: false,
+      }),
+      concurrency: 2,
+      stalledInterval: 10000,
+      maxStalledCount: 1,
     }
-  } catch (dbErr) {
-    console.error(`[${WORKER_NAME}] DB error on failure handler:`, dbErr.message);
-  }
-});
+  );
 
-worker.on('error', (err) => console.error(`[${WORKER_NAME}] Worker error:`, err.message));
+  worker.on('failed', async (job, err) => {
+    console.error(`[${WORKER_NAME}] Job ${job.id} failed:`, err.message);
+    try {
+      const { taskId } = job.data;
+      await db.query(
+        `UPDATE tasks SET status = 'FAILED', attempts = $1, updated_at = NOW() WHERE id = $2`,
+        [job.attemptsMade, taskId]
+      );
+      await db.query(
+        `UPDATE workers SET jobs_failed = jobs_failed + 1 WHERE id = $1`,
+        [workerId]
+      );
+      await logEvent(taskId, workerId, 'FAILED', `Attempt ${job.attemptsMade}: ${err.message}`);
 
-(async () => {
-  await registerWorker();
-  startHeartbeat();
+      if (job.attemptsMade >= job.opts.attempts) {
+        await db.query(
+          `INSERT INTO dlq_tasks (original_task_id, type, payload, reason, attempts)
+           VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (original_task_id) DO NOTHING`,
+          [taskId, job.data.type, JSON.stringify(job.data.payload), err.message, job.attemptsMade]
+        );
+        await logEvent(taskId, workerId, 'DLQ', `Moved to DLQ after ${job.attemptsMade} attempts`);
+        if (io) io.emit('dlq:new', { taskId, type: job.data.type, reason: err.message });
+      }
+    } catch (dbErr) {
+      console.error(`[${WORKER_NAME}] DB error on failure:`, dbErr.message);
+    }
+  });
+
+  worker.on('error', (err) => console.error(`[${WORKER_NAME}] Error:`, err.message));
+
   console.log(`[${WORKER_NAME}] Listening on queue: ${QUEUE_NAME}`);
-})();
+  return worker;
+}
+
+module.exports = { createFileWorker };

@@ -47,36 +47,55 @@ app.get('/health', async (req, res) => {
   }
 });
 
-// ── Routes ───────────────────────────────────────────────
+// ── Routes ────────────────────────────────────────────────
 app.use('/api/tasks', taskRoutes);
 app.use('/api/workers', workerRoutes);
 
 // ── Real-time broadcast ───────────────────────────────────
 setupRealtime(io);
 
-// ── Start heartbeat monitor wired to Socket.IO ────────────
-startMonitor(io);
-
 // ── Start server ──────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, async () => {
   console.log(`[Server] Running on port ${PORT}`);
 
-  // Verify Redis
   try {
     await redis.ping();
     console.log('[Server] Redis connection verified');
   } catch (err) {
     console.error('[Server] Redis connection failed:', err.message);
+    process.exit(1);
   }
 
-  // Verify PostgreSQL
   try {
     await db.query('SELECT NOW()');
     console.log('[Server] PostgreSQL connection verified');
   } catch (err) {
     console.error('[Server] PostgreSQL connection failed:', err.message);
+    process.exit(1);
   }
+
+  // ── Start heartbeat monitor ─────────────────────────────
+  startMonitor(io);
+  console.log('[Server] Heartbeat monitor started');
+
+  // ── Start all 3 workers inline ──────────────────────────
+  // Workers run in the same process — no child processes needed
+  // This works on Render free tier (single web service)
+  startWorkers(io);
 });
+
+// ── Inline worker launcher ────────────────────────────────
+function startWorkers(io) {
+  const { createEmailWorker }  = require('./workers/emailWorker');
+  const { createFileWorker }   = require('./workers/fileWorker');
+  const { createReportWorker } = require('./workers/reportWorker');
+
+  createEmailWorker(io);
+  createFileWorker(io);
+  createReportWorker(io);
+
+  console.log('[Server] All 3 workers started inline');
+}
 
 module.exports = { app, io };
