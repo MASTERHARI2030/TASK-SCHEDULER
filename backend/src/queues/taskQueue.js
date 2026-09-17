@@ -1,11 +1,7 @@
 require('dotenv').config();
 const { Queue } = require('bullmq');
-const redis = require('../config/redis');
-
-const connection = { host: null, port: null };
 
 // BullMQ requires a separate ioredis connection config, not an instance
-// We pass the REDIS_URL directly via connection options
 const bullConnection = {
   connection: new (require('ioredis'))(process.env.REDIS_URL, {
     maxRetriesPerRequest: null,

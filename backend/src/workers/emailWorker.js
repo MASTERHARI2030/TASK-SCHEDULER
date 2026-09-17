@@ -1,6 +1,5 @@
 require('dotenv').config();
 const { Worker } = require('bullmq');
-const { v4: uuidv4 } = require('uuid');
 const db = require('../config/db');
 
 const WORKER_NAME = 'emailWorker';

@@ -22,6 +22,9 @@ const io = new Server(server, {
 app.use(cors());
 app.use(express.json());
 
+// ── Expose io to routes BEFORE registering routes ────────
+app.set('io', io);
+
 // ── Serve frontend ────────────────────────────────────────
 app.use(express.static(path.join(__dirname, '../../frontend')));
 app.get('/', (req, res) => {
@@ -44,13 +47,9 @@ app.get('/health', async (req, res) => {
   }
 });
 
-
 // ── Routes ───────────────────────────────────────────────
 app.use('/api/tasks', taskRoutes);
 app.use('/api/workers', workerRoutes);
-
-// Export io so routes/monitor can emit events
-app.set('io', io);
 
 // ── Real-time broadcast ───────────────────────────────────
 setupRealtime(io);

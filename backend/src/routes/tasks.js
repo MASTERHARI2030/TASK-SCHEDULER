@@ -26,7 +26,6 @@ router.post('/', async (req, res) => {
       [id, type, JSON.stringify(payload), status, priority, delay]
     );
 
-    // If delayed, also record in scheduled_tasks
     if (delay > 0) {
       const runAt = new Date(Date.now() + delay).toISOString();
       await db.query(
@@ -37,13 +36,11 @@ router.post('/', async (req, res) => {
 
     const job = await enqueueTask(id, type, payload, { priority, delay });
 
-    // Update bullmq_job_id
     await db.query(
       `UPDATE tasks SET bullmq_job_id = $1 WHERE id = $2`,
       [job.id, id]
     );
 
-    // Emit to dashboard
     const io = req.app.get('io');
     if (io) io.emit('task:new', { id, type, status, priority, delay, createdAt: new Date().toISOString() });
 
@@ -86,41 +83,16 @@ router.get('/', async (req, res) => {
   }
 });
 
-// ── GET /api/tasks/:id — single task + execution log ─────
-router.get('/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const taskRes = await db.query(
-      `SELECT t.*, w.name AS worker_name
-       FROM tasks t
-       LEFT JOIN workers w ON t.worker_id = w.id
-       WHERE t.id = $1`,
-      [id]
-    );
-    if (!taskRes.rows.length) return res.status(404).json({ error: 'Task not found' });
-
-    const logsRes = await db.query(
-      `SELECT event, worker_name, message, created_at
-       FROM execution_logs
-       WHERE task_id = $1
-       ORDER BY created_at ASC`,
-      [id]
-    );
-
-    res.json({ task: taskRes.rows[0], logs: logsRes.rows });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+// ── IMPORTANT: DLQ routes MUST come before /:id ──────────
+// Otherwise Express matches "dlq" as the :id param
 
 // ── GET /api/tasks/dlq/all — list all DLQ tasks ──────────
 router.get('/dlq/all', async (req, res) => {
   try {
     const result = await db.query(
-      `SELECT d.*, t.type AS task_type
+      `SELECT d.id, d.original_task_id, d.type, d.payload, d.reason,
+              d.attempts, d.failed_at, d.retried, d.retried_at
        FROM dlq_tasks d
-       LEFT JOIN tasks t ON d.original_task_id = t.id
        ORDER BY d.failed_at DESC`
     );
     res.json({ dlqTasks: result.rows });
@@ -143,22 +115,26 @@ router.post('/dlq/:id/retry', async (req, res) => {
     const dlqTask = dlqRes.rows[0];
     if (dlqTask.retried) return res.status(400).json({ error: 'Task already retried' });
 
-    // Create a fresh task
     const newId = uuidv4();
+
+    // dlqTask.payload is already parsed JSONB from PostgreSQL
+    const payload = typeof dlqTask.payload === 'string'
+      ? JSON.parse(dlqTask.payload)
+      : dlqTask.payload;
+
     await db.query(
       `INSERT INTO tasks (id, type, payload, status, priority, delay_ms)
        VALUES ($1, $2, $3, 'QUEUED', 1, 0)`,
-      [newId, dlqTask.type, dlqTask.payload]
+      [newId, dlqTask.type, JSON.stringify(payload)]
     );
 
-    const job = await enqueueTask(newId, dlqTask.type, dlqTask.payload);
+    const job = await enqueueTask(newId, dlqTask.type, payload);
 
     await db.query(
       `UPDATE tasks SET bullmq_job_id = $1 WHERE id = $2`,
       [job.id, newId]
     );
 
-    // Mark DLQ entry as retried
     await db.query(
       `UPDATE dlq_tasks SET retried = TRUE, retried_at = NOW() WHERE id = $1`,
       [id]
@@ -183,6 +159,35 @@ router.delete('/dlq/:id', async (req, res) => {
     );
     if (!result.rows.length) return res.status(404).json({ error: 'DLQ task not found' });
     res.json({ message: 'DLQ task discarded', id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GET /api/tasks/:id — single task + execution log ─────
+// MUST be last — catches any UUID that didn't match above
+router.get('/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const taskRes = await db.query(
+      `SELECT t.*, w.name AS worker_name
+       FROM tasks t
+       LEFT JOIN workers w ON t.worker_id = w.id
+       WHERE t.id = $1`,
+      [id]
+    );
+    if (!taskRes.rows.length) return res.status(404).json({ error: 'Task not found' });
+
+    const logsRes = await db.query(
+      `SELECT event, worker_name, message, created_at
+       FROM execution_logs
+       WHERE task_id = $1
+       ORDER BY created_at ASC`,
+      [id]
+    );
+
+    res.json({ task: taskRes.rows[0], logs: logsRes.rows });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

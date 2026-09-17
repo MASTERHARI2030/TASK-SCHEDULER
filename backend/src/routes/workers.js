@@ -20,7 +20,44 @@ router.get('/', async (req, res) => {
   }
 });
 
+// ── IMPORTANT: /stats/metrics MUST come before /:id ──────
+// Otherwise Express matches "stats" as the :id param
+
+// ── GET /api/workers/stats/metrics ───────────────────────
+router.get('/stats/metrics', async (req, res) => {
+  try {
+    const [queueStats, taskCounts, workerCounts, recentLogs] = await Promise.all([
+      getQueueStats(),
+      db.query(`SELECT status, COUNT(*) AS count FROM tasks GROUP BY status`),
+      db.query(`SELECT status, COUNT(*) AS count FROM workers GROUP BY status`),
+      db.query(
+        `SELECT el.event, el.worker_name, el.message, el.created_at, t.type AS task_type
+         FROM execution_logs el
+         LEFT JOIN tasks t ON el.task_id = t.id
+         ORDER BY el.created_at DESC
+         LIMIT 30`
+      ),
+    ]);
+
+    const taskStatusMap = {};
+    taskCounts.rows.forEach((r) => { taskStatusMap[r.status] = parseInt(r.count); });
+
+    const workerStatusMap = {};
+    workerCounts.rows.forEach((r) => { workerStatusMap[r.status] = parseInt(r.count); });
+
+    res.json({
+      queues: queueStats,
+      tasks: taskStatusMap,
+      workers: workerStatusMap,
+      recentLogs: recentLogs.rows,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── GET /api/workers/:id — single worker + recent logs ────
+// MUST be last
 router.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -43,43 +80,6 @@ router.get('/:id', async (req, res) => {
     );
 
     res.json({ worker: workerRes.rows[0], recentLogs: logsRes.rows });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ── GET /api/metrics — queue depths + task counts ─────────
-router.get('/stats/metrics', async (req, res) => {
-  try {
-    const [queueStats, taskCounts, workerCounts, recentLogs] = await Promise.all([
-      getQueueStats(),
-      db.query(
-        `SELECT status, COUNT(*) AS count FROM tasks GROUP BY status`
-      ),
-      db.query(
-        `SELECT status, COUNT(*) AS count FROM workers GROUP BY status`
-      ),
-      db.query(
-        `SELECT el.event, el.worker_name, el.message, el.created_at, t.type AS task_type
-         FROM execution_logs el
-         LEFT JOIN tasks t ON el.task_id = t.id
-         ORDER BY el.created_at DESC
-         LIMIT 30`
-      ),
-    ]);
-
-    const taskStatusMap = {};
-    taskCounts.rows.forEach((r) => { taskStatusMap[r.status] = parseInt(r.count); });
-
-    const workerStatusMap = {};
-    workerCounts.rows.forEach((r) => { workerStatusMap[r.status] = parseInt(r.count); });
-
-    res.json({
-      queues: queueStats,
-      tasks: taskStatusMap,
-      workers: workerStatusMap,
-      recentLogs: recentLogs.rows,
-    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

@@ -60,7 +60,8 @@ CREATE TABLE IF NOT EXISTS dlq_tasks (
   attempts         INTEGER NOT NULL DEFAULT 0,
   failed_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   retried          BOOLEAN NOT NULL DEFAULT FALSE,
-  retried_at       TIMESTAMPTZ
+  retried_at       TIMESTAMPTZ,
+  UNIQUE (original_task_id)
 );
 
 -- ─────────────────────────────────────────

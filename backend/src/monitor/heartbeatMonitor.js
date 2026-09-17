@@ -93,10 +93,15 @@ async function reassignStaleTasks(deadWorkers) {
       );
 
       // Re-enqueue with a new jobId so BullMQ accepts it
+      // task.payload is JSONB from PostgreSQL — parse if string
+      const payload = typeof task.payload === 'string'
+        ? JSON.parse(task.payload)
+        : task.payload;
+
       await enqueueTask(
         `${task.id}-retry-${task.attempts + 1}`,
         task.type,
-        task.payload,
+        payload,
         { priority: 1 }
       );
 
