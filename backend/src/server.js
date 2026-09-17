@@ -11,6 +11,23 @@ const { startMonitor } = require('./monitor/heartbeatMonitor');
 const { setupRealtime } = require('./socket/realtime');
 const taskRoutes = require('./routes/tasks');
 const workerRoutes = require('./routes/workers');
+const fs = require('fs');
+
+// ── Auto-run schema on startup ────────────────────────────
+async function runSchema() {
+  try {
+    const schema = fs.readFileSync(path.join(__dirname, '../../schema.sql'), 'utf8');
+    const statements = schema.split(';').map(s => s.trim()).filter(s => s.length > 0);
+    for (const stmt of statements) {
+      try { await db.query(stmt); } catch (e) {
+        if (!e.message.includes('already exists')) console.warn('[Schema]', e.message);
+      }
+    }
+    console.log('[Schema] Tables ready ✓');
+  } catch (err) {
+    console.error('[Schema] Failed to run schema:', err.message);
+  }
+}
 
 const app = express();
 const server = http.createServer(app);
@@ -75,13 +92,14 @@ server.listen(PORT, async () => {
     process.exit(1);
   }
 
+  // ── Run schema migrations on startup ───────────────────
+  await runSchema();
+
   // ── Start heartbeat monitor ─────────────────────────────
   startMonitor(io);
   console.log('[Server] Heartbeat monitor started');
 
   // ── Start all 3 workers inline ──────────────────────────
-  // Workers run in the same process — no child processes needed
-  // This works on Render free tier (single web service)
   startWorkers(io);
 });
 
